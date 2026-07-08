@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Job Application Tracker</title>
+<style>
+  body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; background: #f7f7f8; }
+  h1 { color: #222; }
+  section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  input, textarea { width: 100%; padding: 8px; margin: 6px 0; box-sizing: border-box; }
+  button { background: #2563eb; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1d4ed8; }
+  .app-card { border: 1px solid #eee; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
+  .status { font-weight: bold; color: #2563eb; }
+  #authStatus { font-size: 14px; color: #555; }
+  .error { color: #dc2626; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<h1>Job Application Tracker</h1>
+<p id="authStatus">Not logged in</p>
+
+<section id="authSection">
+  <h2>Login / Register</h2>
+  <input type="email" id="email" placeholder="Email">
+  <input type="password" id="password" placeholder="Password">
+  <button onclick="register()">Register</button>
+  <button onclick="login()">Login</button>
+  <p class="error" id="authError"></p>
+</section>
+
+<section id="addSection" style="display:none;">
+  <h2>Add Application</h2>
+  <input type="text" id="company" placeholder="Company">
+  <input type="text" id="role" placeholder="Role">
+  <input type="text" id="source" placeholder="Source (e.g. LinkedIn, Referral)">
+  <textarea id="jobDescription" placeholder="Paste job description (optional)" rows="4"></textarea>
+  <button onclick="addApplication()">Add Application</button>
+</section>
+
+<section id="analyticsSection" style="display:none;">
+  <h2>Analytics</h2>
+  <button onclick="loadAnalytics()">Refresh Analytics</button>
+  <pre id="analyticsOutput"></pre>
+</section>
+
+<section id="listSection" style="display:none;">
+  <h2>Your Applications</h2>
+  <div id="applicationsList"></div>
+</section>
+
+<script>
+const API_BASE = "http://localhost:8000";
+let token = null;
+
+function showApp() {
+  document.getElementById("authSection").style.display = "none";
+  document.getElementById("addSection").style.display = "block";
+  document.getElementById("analyticsSection").style.display = "block";
+  document.getElementById("listSection").style.display = "block";
+  document.getElementById("authStatus").textContent = "Logged in";
+  loadApplications();
+}
+
+async function register() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (res.ok) {
+    document.getElementById("authError").textContent = "Registered! Now click Login.";
+  } else {
+    const err = await res.json();
+    document.getElementById("authError").textContent = err.detail || "Registration failed";
+  }
+}
+
+async function login() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    token = data.access_token;
+    document.getElementById("authError").textContent = "";
+    showApp();
+  } else {
+    document.getElementById("authError").textContent = "Login failed. Check credentials.";
+  }
+}
+
+async function addApplication() {
+  const company = document.getElementById("company").value;
+  const role = document.getElementById("role").value;
+  const source = document.getElementById("source").value;
+  const job_description = document.getElementById("jobDescription").value;
+
+  const res = await fetch(`${API_BASE}/applications`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({ company, role, source, job_description }),
+  });
+
+  if (res.ok) {
+    document.getElementById("company").value = "";
+    document.getElementById("role").value = "";
+    document.getElementById("source").value = "";
+    document.getElementById("jobDescription").value = "";
+    loadApplications();
+  } else {
+    alert("Failed to add application");
+  }
+}
+
+async function loadApplications() {
+  const res = await fetch(`${API_BASE}/applications`, {
+    headers: { "Authorization": `Bearer ${token}` },
+  });
+  const apps = await res.json();
+  const container = document.getElementById("applicationsList");
+  container.innerHTML = "";
+
+  apps.forEach(app => {
+    const div = document.createElement("div");
+    div.className = "app-card";
+    div.innerHTML = `
+      <strong>${app.company}</strong> — ${app.role} <br>
+      Source: ${app.source || "N/A"} <br>
+      Status: <span class="status">${app.current_status}</span> <br>
+      <select onchange="updateStatus(${app.id}, this.value)">
+        <option value="">Change status...</option>
+        <option value="applied">Applied</option>
+        <option value="interviewing">Interviewing</option>
+        <option value="offer">Offer</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <button onclick="analyzeApplication(${app.id})">Analyze with AI</button>
+      <div id="analysis-${app.id}"></div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+async function updateStatus(id, newStatus) {
+  if (!newStatus) return;
+  await fetch(`${API_BASE}/applications/${id}/status`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({ current_status: newStatus }),
+  });
+  loadApplications();
+}
+
+async function analyzeApplication(id) {
+  const outputDiv = document.getElementById(`analysis-${id}`);
+  outputDiv.textContent = "Analyzing...";
+  const res = await fetch(`${API_BASE}/applications/${id}/analyze`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}` },
+  });
+  if (res.ok) {
+    const data = await res.json();
+    outputDiv.innerHTML = `
+      <small>
+        Skills: ${data.required_skills.join(", ")}<br>
+        Seniority: ${data.seniority_level}<br>
+        Red flags: ${data.red_flags.join(", ") || "None"}
+      </small>
+    `;
+  } else {
+    outputDiv.textContent = "Analysis failed (check job description was saved).";
+  }
+}
+
+async function loadAnalytics() {
+  const [summaryRes, funnelRes, sourceRes] = await Promise.all([
+    fetch(`${API_BASE}/analytics/summary`, { headers: { "Authorization": `Bearer ${token}` } }),
+    fetch(`${API_BASE}/analytics/funnel`, { headers: { "Authorization": `Bearer ${token}` } }),
+    fetch(`${API_BASE}/analytics/by-source`, { headers: { "Authorization": `Bearer ${token}` } }),
+  ]);
+  const summary = await summaryRes.json();
+  const funnel = await funnelRes.json();
+  const bySource = await sourceRes.json();
+
+  document.getElementById("analyticsOutput").textContent =
+    "SUMMARY:\n" + JSON.stringify(summary, null, 2) +
+    "\n\nFUNNEL:\n" + JSON.stringify(funnel, null, 2) +
+    "\n\nBY SOURCE:\n" + JSON.stringify(bySource, null, 2);
+}
+</script>
+
+</body>
+</html>
